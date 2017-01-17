@@ -1,0 +1,9 @@
+.idea/*
+*.pyc
+/annotation/vips/data/*
+!/annotation/vips/data/annotation_urls
+!/annotation/vips/data/content_clean_data
+!/annotation/vips/data/test_clean_data
+/annotation/tmp/*
+.DS_Store
+.DS_Store/*
