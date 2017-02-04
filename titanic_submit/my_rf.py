@@ -60,8 +60,15 @@ def change_data(train_df):
     dummies_Pclass = pd.get_dummies(train_df['Pclass'], prefix='Pclass')
     dummies_Embarked = pd.get_dummies(train_df['Embarked'], prefix='Embarked')
 
-    # 使用中位数填充age
-    # train_df.Age = train_df.Age.fillna(train_df.Age.dropna().median())
+    train_df['Name_Title'] = train_df['Name'].apply(lambda x: x.split(',')[1]).apply(lambda x: x.split()[0])
+    train_df['Name_Len'] = train_df['Name'].apply(lambda x: len(x))
+
+    print train_df['Name_Title'].value_counts()
+    print train_df['Survived'].groupby(train_df['Name_Title']).mean()
+    print train_df['Survived'].groupby(pd.qcut(train_df['Name_Len'], 5)).mean()
+    print train_df['Survived'].groupby(pd.qcut(train_df['Name_Len'], 5)).count()
+
+    train_df = train_df.drop(['Name_Title'], axis=1)
 
     train_df.loc[(train_df.Age.isnull()) & (train_df.Gender == 0), 'Age'] = train_df.Age.dropna().loc[
         (train_df.Gender == 0)].median()
@@ -69,12 +76,8 @@ def change_data(train_df):
         (train_df.Gender == 1)].median()
 
     train_df.loc[(train_df.Fare.isnull()), 'Fare'] = train_df.Fare.dropna().median()
-    #
-    # median_age = train_df['Age'].dropna().median()
-    # if len(train_df.Age[train_df.Age.isnull()]) > 0:
-    #     train_df.loc[ (train_df.Age.isnull()), 'Age'] = median_age
 
-    # train_df = set_missing_ages(train_df)
+
 
     train_df.loc[(train_df.Cabin.notnull()), 'Cabin'] = 1
     train_df.loc[(train_df.Cabin.isnull()), 'Cabin'] = 0
@@ -102,12 +105,10 @@ def run():
 
     train_df,ids = change_data(train_df)
 
-    test_df = pd.read_csv('test.csv', header=0)        # Load the test file into a dataframe
 
-    test_df,ids = change_data(test_df)
 
     train_data = train_df.values
-    test_data = test_df.values
+
 
     print train_df.head()
     print train_df.dtypes
@@ -127,16 +128,24 @@ def run():
     print 'cross_val_score...'
     scores = cross_val_score(forest, train_data[0::,1::], train_data[0::,0],scoring=my_scorer)
 
-    print 'Predicting...'
-    output = forest.predict(test_data).astype(int)
-
-
-    predictions_file = open("my_rf.csv", "wb")
-    open_file_object = csv.writer(predictions_file)
-    open_file_object.writerow(["PassengerId","Survived"])
-    open_file_object.writerows(zip(ids, output))
-    predictions_file.close()
+    # print 'Predicting...'
+    #
+    # test_df = pd.read_csv('test.csv', header=0)        # Load the test file into a dataframe
+    #
+    # test_df,ids = change_data(test_df)
+    #
+    # test_data = test_df.values
+    #
+    # output = forest.predict(test_data).astype(int)
+    #
+    # predictions_file = open("my_rf.csv", "wb")
+    # open_file_object = csv.writer(predictions_file)
+    # open_file_object.writerow(["PassengerId","Survived"])
+    # open_file_object.writerows(zip(ids, output))
+    # predictions_file.close()
     print 'Done.'
 
 if __name__=="__main__":
     run()
+    # *参考解决思路 87%* https://www.kaggle.com/jasonm/titanic/large-families-not-good-for-survival
+    # *参考解决思路 88%* https://www.kaggle.com/scirpus/titanic/genetic-programming-lb-0-88/code
