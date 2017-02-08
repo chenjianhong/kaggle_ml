@@ -8,6 +8,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn import preprocessing
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.grid_search import GridSearchCV
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split,cross_val_score
@@ -25,124 +26,156 @@ def my_scorer(estimator, x, y):
     print u'sklearn准确率:%s,准确率:%s,召回率:%s\n'% (a, p, r)
     return a
 
-def set_missing_ages(df):
 
-    # 把已有的数值型特征取出来丢进Random Forest Regressor中
-    age_df = df[['Age','Fare', 'Parch', 'SibSp', 'Pclass']]
+def names(train, test):
+    for i in [train, test]:
+        i['Name_Len'] = i['Name'].apply(lambda x: len(x))
+        i['Name_Title'] = i['Name'].apply(lambda x: x.split(',')[1]).apply(lambda x: x.split()[0])
+        i['Name_Title'] = np.where((i['Name_Title']).isin(['Mr.', 'Mrs.', 'Miss.', 'Master.', 'Dr.']),
+                                   i['Name_Title'], 'other')
+    good_cols = ['Name_Title' + '_' + i for i in train['Name_Title'].unique() if i in test['Name_Title'].unique()]
+    train = pd.concat((train, pd.get_dummies(train['Name_Title'], prefix='Name_Title')[good_cols]), axis=1)
+    test = pd.concat((test, pd.get_dummies(test['Name_Title'], prefix='Name_Title')[good_cols]), axis=1)
+    return train,test
 
-    # 乘客分成已知年龄和未知年龄两部分
-    known_age = age_df[age_df.Age.notnull()].as_matrix()
-    unknown_age = age_df[age_df.Age.isnull()].as_matrix()
+def age_impute(train, test):
+    for i in [train, test]:
+        i['Age_Null_Flag'] = i['Age'].apply(lambda x: 1 if pd.isnull(x) else 0)
+        data = train.groupby(['Name_Title', 'Pclass'])['Age']
+        i['Age'] = data.transform(lambda x: x.fillna(x.mean()))
+    return train, test
 
-    # y即目标年龄
-    y = known_age[:, 0]
+def cabin(train, test):
+    for i in [train, test]:
+        i['Cabin_num1'] = i['Cabin'].apply(lambda x: str(x).split(' ')[-1][1:])
+        i['Cabin_num1'].replace('an', np.NaN, inplace=True)
+        i['Cabin_num1'] = i['Cabin_num1'].apply(lambda x: int(x) if not pd.isnull(x) and x <> '' else np.NaN)
+        i['Cabin_num'] = pd.qcut(train['Cabin_num1'], 3)
+    train = pd.concat((train, pd.get_dummies(train['Cabin_num'], prefix='Cabin_num')), axis=1)
+    test = pd.concat((test, pd.get_dummies(test['Cabin_num'], prefix='Cabin_num')), axis=1)
+    train = train.drop(['Cabin_num1','Cabin_num'], axis=1)
+    test = test.drop(['Cabin_num1','Cabin_num'], axis=1)
+    return train, test
 
-    # X即特征属性值
-    X = known_age[:, 1:]
-
-    # fit到RandomForestRegressor之中
-    rfr = RandomForestRegressor(random_state=0, n_estimators=2000, n_jobs=-1)
-    rfr.fit(X, y)
-
-    # 用得到的模型进行未知年龄结果预测
-    predictedAges = rfr.predict(unknown_age[:, 1::])
-
-    # 用得到的预测结果填补原缺失数据
-    df.loc[(df.Age.isnull()), 'Age'] = predictedAges
-
-    return df
-
-def change_data(train_df):
-    # female = 0, Male = 1
-    # map遍历某列的每一个数据,使用一个函数或者一个字典映射对象
-    train_df['Gender'] = train_df['Sex'].map({'female': 0, 'male': 1}).astype(int)
-
-    dummies_Pclass = pd.get_dummies(train_df['Pclass'], prefix='Pclass')
-    dummies_Embarked = pd.get_dummies(train_df['Embarked'], prefix='Embarked')
-
-    train_df['Name_Title'] = train_df['Name'].apply(lambda x: x.split(',')[1]).apply(lambda x: x.split()[0])
-    train_df['Name_Len'] = train_df['Name'].apply(lambda x: len(x))
-
-    print train_df['Name_Title'].value_counts()
-    print train_df['Survived'].groupby(train_df['Name_Title']).mean()
-    print train_df['Survived'].groupby(pd.qcut(train_df['Name_Len'], 5)).mean()
-    print train_df['Survived'].groupby(pd.qcut(train_df['Name_Len'], 5)).count()
-
-    train_df = train_df.drop(['Name_Title'], axis=1)
-
-    train_df.loc[(train_df.Age.isnull()) & (train_df.Gender == 0), 'Age'] = train_df.Age.dropna().loc[
-        (train_df.Gender == 0)].median()
-    train_df.loc[(train_df.Age.isnull()) & (train_df.Gender == 1), 'Age'] = train_df.Age.dropna().loc[
-        (train_df.Gender == 1)].median()
-
-    train_df.loc[(train_df.Fare.isnull()), 'Fare'] = train_df.Fare.dropna().median()
+def fam_size(train, test):
+    for i in [train, test]:
+        i['Fam_Size'] = np.where((i['SibSp']+i['Parch']) == 0 , 'Solo',
+                           np.where((i['SibSp']+i['Parch']) <= 3,'Nuclear', 'Big'))
+    good_cols = ['Fam_Size' + '_' + i for i in train['Fam_Size'].unique() if i in test['Fam_Size'].unique()]
+    train = pd.concat((train, pd.get_dummies(train['Fam_Size'], prefix='Fam_Size')[good_cols]), axis=1)
+    test = pd.concat((test, pd.get_dummies(test['Fam_Size'], prefix='Fam_Size')[good_cols]), axis=1)
+    return train, test
 
 
+def fare(train, test):
+    for i in [train, test]:
+        i.loc[(i.Fare.isnull()), 'Fare'] = i.Fare.dropna().median()
+    return train, test
 
-    train_df.loc[(train_df.Cabin.notnull()), 'Cabin'] = 1
-    train_df.loc[(train_df.Cabin.isnull()), 'Cabin'] = 0
 
-    train_df.Cabin = train_df.Cabin.astype(int)
+def sex(train, test):
+    train = pd.concat([train, pd.get_dummies(train['Sex'], prefix='Sex')], axis=1)
+    test = pd.concat([test, pd.get_dummies(test['Sex'], prefix='Sex')], axis=1)
+    return train, test
 
-    scaler = preprocessing.StandardScaler()
-    age_scale_param = scaler.fit(train_df['Age'])
-    train_df['Age_scaled'] = scaler.fit_transform(train_df['Age'], age_scale_param)
 
-    fare_scale_param = scaler.fit(train_df['Fare'])
-    train_df['Fare_scaled'] = scaler.fit_transform(train_df['Fare'], fare_scale_param)
+def pclass(train, test):
+    train = pd.concat([train, pd.get_dummies(train['Pclass'], prefix='Pclass'), pd.get_dummies(train['Embarked'], prefix='Embarked')], axis=1)
+    test = pd.concat([test, pd.get_dummies(test['Pclass'], prefix='Pclass'), pd.get_dummies(test['Embarked'], prefix='Embarked')], axis=1)
+    return train, test
 
-    ids = train_df.PassengerId.values
+def feature_process(train_df, test_df):
+    train_df, test_df = names(train_df,test_df)
+    train_df, test_df = age_impute(train_df,test_df)
+    train_df, test_df = cabin(train_df,test_df)
+    train_df, test_df = fam_size(train_df,test_df)
+    train_df, test_df = fare(train_df,test_df)
+    train_df, test_df = pclass(train_df,test_df)
+    train_df, test_df = sex(train_df,test_df)
 
-    train_df = pd.concat([train_df, dummies_Pclass, dummies_Embarked], axis=1)
+    return train_df,test_df
 
-    # 删除暂时不需要的列
+def get_best_param(train_data):
+    rf14 = RandomForestClassifier(max_features='auto',
+                                  oob_score=True,
+                                  random_state=1,
+                                  n_jobs=-1)
 
-    train_df = train_df.drop(['Name', 'Sex', 'Ticket', 'PassengerId', 'Embarked', 'Age', 'Fare', 'Pclass'], axis=1)
-    return train_df,ids
+    param_grid = {"criterion": ["gini", "entropy"],
+                  "min_samples_leaf": [1, 5, 10],
+                  "min_samples_split": [2, 4, 10, 12, 16],
+                  "n_estimators": [50, 100, 400, 700, 1000]}
+
+    gs = GridSearchCV(estimator=rf14,
+                      param_grid=param_grid,
+                      scoring='accuracy',
+                      cv=3,
+                      n_jobs=-1)
+
+    gs = gs.fit(train_data[0::,1::], train_data[0::,0])
+
+    print(gs.best_score_)
+    print(gs.best_params_)
 
 def run():
     train_df = pd.read_csv('train.csv', header=0)
+    test_df = pd.read_csv('test.csv', header=0)  # Load the test file into a dataframe
 
-    train_df,ids = change_data(train_df)
+    train_df,test_df = feature_process(train_df, test_df)
 
+    train_df = train_df.drop(['Name','Name_Title','Sex', 'Ticket', 'PassengerId', 'Embarked', 'Pclass','Fam_Size','Cabin'], axis=1)
 
+    ids = test_df['PassengerId']
+
+    test_df = test_df.drop(['Name','Name_Title','Sex', 'Ticket', 'PassengerId', 'Embarked', 'Pclass','Fam_Size','Cabin'], axis=1)
 
     train_data = train_df.values
 
 
     print train_df.head()
     print train_df.dtypes
+    print test_df.dtypes
 
     print 'Training...'
-    # forest = RandomForestClassifier(n_estimators=100)
-    forest = GradientBoostingClassifier(n_estimators=100, learning_rate=1.0, max_depth=1, random_state=0)
+    # forest = RandomForestClassifier()
+    forest = RandomForestClassifier(criterion='entropy',
+                                  n_estimators=400,
+                                  min_samples_split=16,
+                                  min_samples_leaf=1,
+                                  max_features='auto',
+                                  oob_score=True,
+                                  random_state=1,
+                                  n_jobs=-1)
+    # forest = GradientBoostingClassifier(n_estimators=100, learning_rate=1.0, max_depth=1, random_state=0)
     forest.fit( train_data[0::,1::], train_data[0::,0] )
-
-    if hasattr(forest, 'feature_importances_'):
-        print 'feature_importances_:%s' % (['%0.8f' % i for i in forest.feature_importances_])
 
     fit_x, predict_x, fit_y, predict_y = train_test_split(train_data[0::,1::], train_data[0::,0], test_size=0.2)
     print confusion_matrix(predict_y, forest.predict(predict_x))
     print classification_report(predict_y, forest.predict(predict_x))
 
     print 'cross_val_score...'
-    scores = cross_val_score(forest, train_data[0::,1::], train_data[0::,0],scoring=my_scorer)
+    scores = cross_val_score(forest, train_data[0::,1::], train_data[0::,0],scoring=my_scorer,cv=5)
 
-    # print 'Predicting...'
-    #
-    # test_df = pd.read_csv('test.csv', header=0)        # Load the test file into a dataframe
-    #
-    # test_df,ids = change_data(test_df)
-    #
-    # test_data = test_df.values
-    #
-    # output = forest.predict(test_data).astype(int)
-    #
-    # predictions_file = open("my_rf.csv", "wb")
-    # open_file_object = csv.writer(predictions_file)
-    # open_file_object.writerow(["PassengerId","Survived"])
-    # open_file_object.writerows(zip(ids, output))
-    # predictions_file.close()
+    # get_best_param(train_data)
+
+    print 'Predicting...'
+
+
+
+    test_data = test_df.values
+
+    output = forest.predict(test_data).astype(int)
+
+    predictions_file = open("my_rf.csv", "wb")
+    open_file_object = csv.writer(predictions_file)
+    open_file_object.writerow(["PassengerId","Survived"])
+    open_file_object.writerows(zip(ids, output))
+    predictions_file.close()
+
+    print pd.concat((pd.DataFrame(train_df.columns, columns=['variable']),
+               pd.DataFrame(forest.feature_importances_, columns=['importance'])),
+              axis=1).sort_values(by='importance', ascending=False)[:20]
+
     print 'Done.'
 
 if __name__=="__main__":
